@@ -11,17 +11,34 @@ Production-quality human pose estimation with 33-landmark detection, 3D spatial 
 ![MediaPipe](https://img.shields.io/badge/MediaPipe-00897B?style=flat-square&logo=google&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=flat-square&logo=opencv&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?style=flat-square)
-[![IEEE](https://img.shields.io/badge/IEEE_AISP_2024-Published-blue?style=flat-square)](https://ieeexplore.ieee.org/)
+[![IEEE](https://img.shields.io/badge/IEEE_AISP_2024-Published-blue?style=flat-square)](https://doi.org/10.1109/AISP61711.2024.10870725)
 
 </div>
 
 ---
 
+## 📄 Publication
+
+This work was peer-reviewed and published at the **4th IEEE International Conference on Artificial Intelligence and Signal Processing (AISP 2024)**.
+
+| Field | Detail |
+|-------|--------|
+| **Title** | Real-Time Human Pose Estimation Using Media-Pipe an Artificial Intelligence Applications in Health and Fitness |
+| **Authors** | K. Totlani · S. S. Dhavala · **S. Sandeep Kumar Vijayarao** · Y. Challagundla · B. Roy · E. R. Zhuo |
+| **Venue** | 2024 4th International Conference on Artificial Intelligence and Signal Processing (AISP), IEEE, pp. 1–6 |
+| **Date** | 26 October 2024 |
+| **DOI** | [10.1109/AISP61711.2024.10870725](https://doi.org/10.1109/AISP61711.2024.10870725) |
+| **IEEE Xplore** | [ieeexplore.ieee.org/document/10870725](https://ieeexplore.ieee.org/document/10870725) |
+
+---
+
 ## 📋 Overview
 
-This project implements real-time human pose estimation with advanced spatial reasoning capabilities, achieving research-grade performance validated through IEEE peer review. The system detects 33 body landmarks, computes 3D joint angles and velocities, classifies human activities using LSTM networks, and counts exercise repetitions — all in real-time.
+This project implements real-time human pose estimation with advanced spatial reasoning capabilities. The system detects 33 body landmarks, computes 3D joint angles and velocities, classifies human activities using LSTM networks, and counts exercise repetitions — all in real-time.
 
-### Key Results
+### Results reported in the publication
+
+The figures below are the peer-reviewed results from the AISP 2024 paper linked above. They were measured in the study, not by this repository's test suite — see [Testing](#-testing) for what this codebase verifies, and re-run the benchmarking utilities in `src/metrics.py` to reproduce them on your own hardware and data.
 
 | Metric | Value | Description |
 |--------|-------|-------------|
@@ -235,11 +252,20 @@ Tests cover: angle computation · activity classification · metric calculations
 If you use this project in your research, please cite:
 
 ```bibtex
-@inproceedings{pose_estimation_aisp2024,
-  title     = {Real-Time Human Pose Estimation & Spatial Reasoning},
-  booktitle = {IEEE AISP 2024},
+@inproceedings{totlani2024realtime,
+  title     = {Real-Time Human Pose Estimation Using Media-Pipe an Artificial
+               Intelligence Applications in Health and Fitness},
+  author    = {Totlani, Ketan and Dhavala, Shiva S. and
+               Vijayarao, S Sandeep Kumar and Challagundla, Yagnesh and
+               Roy, B. and Zhuo, Eugenia R.},
+  booktitle = {2024 4th International Conference on Artificial Intelligence
+               and Signal Processing (AISP)},
+  pages     = {1--6},
   year      = {2024},
-  note      = {85\% mAP, 0.78 IoU, 30+ FPS}
+  month     = {oct},
+  publisher = {IEEE},
+  doi       = {10.1109/AISP61711.2024.10870725},
+  url       = {https://ieeexplore.ieee.org/document/10870725}
 }
 ```
 
