@@ -8,6 +8,7 @@
 
 <sub>Output of `python scripts/make_demo_gif.py`: this repo's landmarks, right-knee angle and rep counter on a CC BY 3.0 clip (see [assets/README.md](assets/README.md)).</sub>
 
+[![CI](https://github.com/sandeepvijayarao09/realtime-pose-estimation/actions/workflows/ci.yml/badge.svg)](https://github.com/sandeepvijayarao09/realtime-pose-estimation/actions/workflows/ci.yml)
 ![Python](https://img.shields.io/badge/Python-3.12+-3776AB?style=flat-square&logo=python&logoColor=white)
 ![MediaPipe](https://img.shields.io/badge/MediaPipe-1.1-00897B?style=flat-square&logo=google&logoColor=white)
 ![OpenCV](https://img.shields.io/badge/OpenCV-5C3EE8?style=flat-square&logo=opencv&logoColor=white)
