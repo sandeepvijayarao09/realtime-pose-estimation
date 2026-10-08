@@ -1,5 +1,5 @@
-numpy>=1.21.0
-opencv-python>=4.6.0
-mediapipe>=0.8.0
-tensorflow>=2.10.0
-protobuf<=3.20.0
+# Core runtime (Python 3.12+)
+mediapipe==1.1.0
+opencv-contrib-python==5.0.0.93  # installed by mediapipe; provides cv2
+numpy==2.5.3
+pillow==12.3.0                   # scripts/make_demo_gif.py

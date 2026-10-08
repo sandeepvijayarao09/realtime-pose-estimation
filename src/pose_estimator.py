@@ -1,15 +1,57 @@
 """
 Real-Time Human Pose Estimation Module
-Based on MediaPipe Holistic framework for 33-landmark detection.
+Uses the MediaPipe Tasks PoseLandmarker (33 body landmarks).
 Supports 3D joint angle computation and real-time FPS tracking.
 """
+
+import os
+import time
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 import cv2
 import mediapipe as mp
 import numpy as np
-import time
-from typing import Tuple, Dict, List, Optional
-from dataclasses import dataclass
+from mediapipe.tasks.python import BaseOptions, vision
+
+
+# Official MediaPipe pose landmarker models (Apache-2.0), indexed by complexity.
+MODEL_VARIANTS = {0: "lite", 1: "full", 2: "heavy"}
+MODEL_URL = (
+    "https://storage.googleapis.com/mediapipe-models/pose_landmarker/"
+    "pose_landmarker_{variant}/float16/1/pose_landmarker_{variant}.task"
+)
+DEFAULT_MODEL_DIR = Path(
+    os.environ.get("POSE_MODEL_DIR", Path(__file__).resolve().parent.parent / "models")
+)
+
+
+def ensure_model(model_complexity: int = 1, model_dir: Optional[Path] = None) -> Path:
+    """
+    Return the path to a pose landmarker .task file, downloading it on first use.
+
+    Args:
+        model_complexity: 0 (lite, ~5.8 MB), 1 (full, ~9.4 MB) or 2 (heavy, ~31 MB).
+        model_dir: Where to cache the model. Defaults to ./models or $POSE_MODEL_DIR.
+
+    Returns:
+        Path to the cached model file.
+    """
+    if model_complexity not in MODEL_VARIANTS:
+        raise ValueError(f"model_complexity must be 0, 1 or 2, got {model_complexity}")
+    variant = MODEL_VARIANTS[model_complexity]
+    model_dir = Path(model_dir or DEFAULT_MODEL_DIR)
+    path = model_dir / f"pose_landmarker_{variant}.task"
+    if not path.exists():
+        model_dir.mkdir(parents=True, exist_ok=True)
+        url = MODEL_URL.format(variant=variant)
+        print(f"Downloading {url} -> {path}")
+        tmp = path.with_suffix(".part")
+        urllib.request.urlretrieve(url, tmp)
+        tmp.rename(path)
+    return path
 
 
 @dataclass
@@ -24,17 +66,17 @@ class PoseLandmark:
 
 class PoseEstimator:
     """
-    MediaPipe-based real-time pose estimator.
+    MediaPipe PoseLandmarker wrapper.
     Detects 33 body landmarks with 3D coordinates and visibility scores.
     """
 
     # MediaPipe landmark indices for key joints
     LANDMARK_INDICES = {
         'nose': 0,
-        'left_eye': 1,
-        'right_eye': 2,
-        'left_ear': 3,
-        'right_ear': 4,
+        'left_eye': 2,
+        'right_eye': 5,
+        'left_ear': 7,
+        'right_ear': 8,
         'left_shoulder': 11,
         'right_shoulder': 12,
         'left_elbow': 13,
@@ -56,30 +98,40 @@ class PoseEstimator:
         smooth_landmarks: bool = True,
         min_detection_confidence: float = 0.5,
         min_tracking_confidence: float = 0.5,
+        model_path: Optional[str] = None,
     ):
         """
-        Initialize MediaPipe Holistic pose estimator.
+        Initialize the MediaPipe PoseLandmarker.
 
         Args:
-            static_image_mode: If True, detect on every frame. If False, use tracking.
+            static_image_mode: If True, run detection independently on every frame
+                (IMAGE mode). If False, use VIDEO mode, which tracks the person
+                across frames and smooths landmarks.
             model_complexity: 0 (lite), 1 (full), or 2 (heavy).
-            smooth_landmarks: Apply temporal smoothing to landmarks.
+            smooth_landmarks: Kept for API compatibility. Smoothing is built into
+                the Tasks VIDEO running mode, so it is on whenever
+                static_image_mode is False.
             min_detection_confidence: Minimum confidence for detection.
             min_tracking_confidence: Minimum confidence for tracking.
+            model_path: Optional path to a .task model. Downloaded if omitted.
         """
         self.static_image_mode = static_image_mode
         self.model_complexity = model_complexity
         self.smooth_landmarks = smooth_landmarks
 
-        # Initialize MediaPipe Holistic
-        self.mp_holistic = mp.solutions.holistic
-        self.holistic = self.mp_holistic.Holistic(
-            static_image_mode=static_image_mode,
-            model_complexity=model_complexity,
-            smooth_landmarks=smooth_landmarks,
-            min_detection_confidence=min_detection_confidence,
+        model_path = Path(model_path) if model_path else ensure_model(model_complexity)
+        self.running_mode = (
+            vision.RunningMode.IMAGE if static_image_mode else vision.RunningMode.VIDEO
+        )
+        options = vision.PoseLandmarkerOptions(
+            base_options=BaseOptions(model_asset_path=str(model_path)),
+            running_mode=self.running_mode,
+            num_poses=1,
+            min_pose_detection_confidence=min_detection_confidence,
+            min_pose_presence_confidence=min_detection_confidence,
             min_tracking_confidence=min_tracking_confidence,
         )
+        self.landmarker = vision.PoseLandmarker.create_from_options(options)
 
         # FPS tracking
         self.frame_count = 0
@@ -88,70 +140,94 @@ class PoseEstimator:
         self.frame_times = []
         self.max_fps_samples = 30
 
+        # VIDEO mode needs strictly increasing timestamps
+        self._last_timestamp_ms = -1
+
         # Cached landmarks from last frame
         self._cached_landmarks = None
 
-    def estimate_pose(self, frame: np.ndarray) -> Tuple[bool, Dict[str, PoseLandmark]]:
+    def _detect(self, frame: np.ndarray, timestamp_ms: Optional[int] = None):
+        """Run the landmarker on a BGR frame and return the raw 33 landmarks (or None)."""
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        image = mp.Image(image_format=mp.ImageFormat.SRGB, data=np.ascontiguousarray(frame_rgb))
+
+        if self.running_mode == vision.RunningMode.IMAGE:
+            result = self.landmarker.detect(image)
+        else:
+            if timestamp_ms is None:
+                timestamp_ms = int(time.monotonic() * 1000)
+            timestamp_ms = max(int(timestamp_ms), self._last_timestamp_ms + 1)
+            self._last_timestamp_ms = timestamp_ms
+            result = self.landmarker.detect_for_video(image, timestamp_ms)
+
+        if not result.pose_landmarks:
+            return None
+        return result.pose_landmarks[0]
+
+    def estimate_pose(
+        self,
+        frame: np.ndarray,
+        timestamp_ms: Optional[int] = None,
+    ) -> Tuple[bool, Dict[str, PoseLandmark]]:
         """
         Estimate pose landmarks from a single frame.
 
         Args:
             frame: Input frame (BGR format from OpenCV).
+            timestamp_ms: Frame timestamp for VIDEO mode. Defaults to wall clock.
 
         Returns:
             Tuple of (detection_success, landmarks_dict).
             landmarks_dict maps landmark names to PoseLandmark objects.
         """
         frame_time = time.time()
-        h, w, c = frame.shape
-
-        # Convert BGR to RGB for MediaPipe
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
-        # Run inference
-        results = self.holistic.process(frame_rgb)
+        pose = self._detect(frame, timestamp_ms)
 
         # Update FPS tracking
         self._update_fps(frame_time)
 
-        if results.pose_landmarks is None:
+        if pose is None:
             return False, {}
 
         # Extract landmarks as PoseLandmark objects
         landmarks = {}
         for name, idx in self.LANDMARK_INDICES.items():
-            if idx < len(results.pose_landmarks.landmark):
-                lm = results.pose_landmarks.landmark[idx]
+            if idx < len(pose):
+                lm = pose[idx]
                 landmarks[name] = PoseLandmark(
                     x=lm.x,
                     y=lm.y,
                     z=lm.z,
-                    visibility=lm.visibility,
+                    visibility=lm.visibility if lm.visibility is not None else 0.0,
                     landmark_id=idx,
                 )
 
         self._cached_landmarks = landmarks
         return True, landmarks
 
-    def get_all_landmarks(self, frame: np.ndarray) -> np.ndarray:
+    def get_all_landmarks(
+        self,
+        frame: np.ndarray,
+        timestamp_ms: Optional[int] = None,
+    ) -> np.ndarray:
         """
         Get all 33 pose landmarks as a numpy array.
 
         Args:
             frame: Input frame (BGR format).
+            timestamp_ms: Frame timestamp for VIDEO mode.
 
         Returns:
             Array of shape (33, 4) with [x, y, z, visibility] for each landmark.
         """
-        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.holistic.process(frame_rgb)
-
-        if results.pose_landmarks is None:
-            return np.zeros((33, 4))
+        pose = self._detect(frame, timestamp_ms)
 
         landmarks_array = np.zeros((33, 4))
-        for i, lm in enumerate(results.pose_landmarks.landmark):
-            landmarks_array[i] = [lm.x, lm.y, lm.z, lm.visibility]
+        if pose is None:
+            return landmarks_array
+
+        for i, lm in enumerate(pose[:33]):
+            landmarks_array[i] = [lm.x, lm.y, lm.z, lm.visibility or 0.0]
 
         return landmarks_array
 
@@ -260,5 +336,6 @@ class PoseEstimator:
 
     def close(self) -> None:
         """Release resources."""
-        if self.holistic:
-            self.holistic.close()
+        if self.landmarker:
+            self.landmarker.close()
+            self.landmarker = None

@@ -3,8 +3,8 @@ Real-Time Human Pose Estimation & Spatial Reasoning Package
 """
 
 __version__ = "1.0.0"
-__author__ = "Pose Estimation Team"
-__description__ = "Production-quality real-time pose estimation with spatial reasoning"
+__author__ = "Sandeep Vijayarao"
+__description__ = "Real-time pose estimation (MediaPipe PoseLandmarker) with joint-angle reasoning"
 
 from .pose_estimator import PoseEstimator, PoseLandmark
 from .spatial_reasoning import SpatialReasoning, RepCounter, JointAngle, JointVelocity

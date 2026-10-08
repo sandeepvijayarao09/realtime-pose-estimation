@@ -6,6 +6,7 @@ Can run in headless mode (saves output video) if no display is available.
 """
 
 import cv2
+import numpy as np
 import argparse
 import sys
 import os
@@ -26,6 +27,11 @@ def run_pose_estimation_demo(
     headless: bool = False,
     activity_classifier: bool = False,
     max_frames: int = None,
+    classifier_weights: str = None,
+    rep_joint: str = 'left_elbow_angle',
+    rep_min: float = 60.0,
+    rep_max: float = 170.0,
+    model_complexity: int = 1,
 ):
     """
     Run pose estimation demo on webcam or video file.
@@ -34,8 +40,13 @@ def run_pose_estimation_demo(
         input_source: '0' for webcam, or path to video file.
         output_video: Path to save output video (optional).
         headless: If True, don't display window (for servers).
-        activity_classifier: If True, use activity classifier.
+        activity_classifier: If True, run the optional LSTM activity classifier.
         max_frames: Maximum frames to process (None for unlimited).
+        classifier_weights: Path to a Keras model trained with ActivityClassifier.train().
+        rep_joint: Joint angle used for rep counting (e.g. left_knee_angle for squats).
+        rep_min: Angle below which a rep is "down".
+        rep_max: Angle above which a rep is completed.
+        model_complexity: 0 (lite), 1 (full) or 2 (heavy) pose model.
     """
     print("=" * 60)
     print("Real-Time Human Pose Estimation & Spatial Reasoning")
@@ -45,7 +56,7 @@ def run_pose_estimation_demo(
     print("Initializing pose estimator...")
     pose_estimator = PoseEstimator(
         static_image_mode=False,
-        model_complexity=1,
+        model_complexity=model_complexity,
         smooth_landmarks=True,
         min_detection_confidence=0.5,
         min_tracking_confidence=0.5,
@@ -63,13 +74,21 @@ def run_pose_estimation_demo(
         print("Initializing activity classifier...")
         try:
             activity_clf = ActivityClassifier()
+            if classifier_weights:
+                activity_clf.load_model(classifier_weights)
+            else:
+                print(
+                    "Warning: no --classifier-weights given. The LSTM is untrained, "
+                    "so its labels fall back to a simple motion heuristic."
+                )
         except Exception as e:
             print(f"Warning: Could not initialize activity classifier: {e}")
             activity_clf = None
 
     # Open video source
     print(f"Opening video source: {input_source}")
-    if input_source == '0':
+    is_webcam = input_source == '0'
+    if is_webcam:
         cap = cv2.VideoCapture(0)
     else:
         cap = cv2.VideoCapture(input_source)
@@ -118,8 +137,9 @@ def run_pose_estimation_demo(
             frame_count += 1
             frame_start = fps_benchmark.start_frame()
 
-            # Estimate pose
-            success, landmarks = pose_estimator.estimate_pose(frame)
+            # Estimate pose (video files use their own timestamps)
+            timestamp_ms = None if is_webcam else int(frame_count * 1000 / fps)
+            success, landmarks = pose_estimator.estimate_pose(frame, timestamp_ms)
 
             if success:
                 detected_count += 1
@@ -127,7 +147,7 @@ def run_pose_estimation_demo(
                 # Convert landmarks dict to numpy array for spatial reasoning
                 landmarks_array = {}
                 for name, lm in landmarks.items():
-                    landmarks_array[name] = [lm.x, lm.y, lm.z, lm.visibility]
+                    landmarks_array[name] = np.array([lm.x, lm.y, lm.z, lm.visibility])
 
                 # Compute angles
                 angles = spatial_reasoning.compute_all_joint_angles(
@@ -150,16 +170,18 @@ def run_pose_estimation_demo(
                         landmarks_array
                     )
                     activity_clf.add_frame_to_sequence(pose_vector)
+                    if activity_clf.get_sequence_progress() >= 1.0:
+                        activity, activity_conf, _ = activity_clf.predict_activity()
 
-                # Update rep counter (for left elbow curl)
-                left_elbow_angle = angles.get(
-                    'left_elbow_angle'
-                ).angle_degrees if 'left_elbow_angle' in angles else 90
-                rep_count, rep_completed = rep_counter.update(
-                    left_elbow_angle,
-                    min_angle=60.0,
-                    max_angle=170.0,
-                )
+                # Update rep counter on the chosen joint angle
+                if rep_joint in angles:
+                    rep_count, rep_completed = rep_counter.update(
+                        angles[rep_joint].angle_degrees,
+                        min_angle=rep_min,
+                        max_angle=rep_max,
+                    )
+                else:
+                    rep_count = rep_counter.get_rep_count()
 
                 # Draw landmarks and connections
                 frame = pose_estimator.draw_landmarks(
@@ -178,6 +200,7 @@ def run_pose_estimation_demo(
                     rep_count,
                     detected_count,
                     frame_count,
+                    rep_joint=rep_joint,
                 )
 
             else:
@@ -231,7 +254,7 @@ def run_pose_estimation_demo(
         print("=" * 60)
         print(f"Total frames processed: {frame_count}")
         print(f"Frames with pose detected: {detected_count}")
-        print(f"Detection rate: {(detected_count/frame_count*100):.1f}%")
+        print(f"Detection rate: {(detected_count / max(frame_count, 1) * 100):.1f}%")
         print(f"Average FPS: {stats.get('fps', 0):.2f}")
         print(f"Avg frame time: {stats.get('avg_frame_time_ms', 0):.2f} ms")
         print(f"Min frame time: {stats.get('min_frame_time_ms', 0):.2f} ms")
@@ -251,6 +274,7 @@ def draw_info_overlay(
     rep_count,
     detected_count,
     frame_count,
+    rep_joint=None,
 ):
     """Draw text information overlay on frame."""
     h, w = frame.shape[:2]
@@ -294,10 +318,13 @@ def draw_info_overlay(
 
     # Angles
     y_offset = 120
-    for joint_name, angle_obj in list(angles.items())[:4]:
+    shown = [rep_joint] if rep_joint in angles else []
+    shown += [name for name in angles if name not in shown][:4 - len(shown)]
+    for joint_name in shown:
+        angle_obj = angles[joint_name]
         cv2.putText(
             frame,
-            f"{joint_name}: {angle_obj.angle_degrees:.1f}°",
+            f"{joint_name}: {angle_obj.angle_degrees:.1f} deg",
             (10, y_offset),
             font,
             0.5,
@@ -359,8 +386,26 @@ def main():
     parser.add_argument(
         '--classifier',
         action='store_true',
-        help="Enable LSTM activity classifier",
+        help="Enable the optional LSTM activity classifier (needs TensorFlow)",
     )
+    parser.add_argument(
+        '--classifier-weights',
+        type=str,
+        default=None,
+        help="Keras model file trained with ActivityClassifier.train()",
+    )
+    parser.add_argument(
+        '--rep-joint',
+        type=str,
+        default='left_elbow_angle',
+        help="Joint angle to count reps on, e.g. left_knee_angle for squats",
+    )
+    parser.add_argument('--rep-min', type=float, default=60.0,
+                        help="Angle (deg) below which the rep is 'down'")
+    parser.add_argument('--rep-max', type=float, default=170.0,
+                        help="Angle (deg) above which the rep is completed")
+    parser.add_argument('--model-complexity', type=int, default=1, choices=[0, 1, 2],
+                        help="Pose model: 0=lite, 1=full, 2=heavy")
     parser.add_argument(
         '--max-frames',
         type=int,
@@ -381,6 +426,11 @@ def main():
         headless=args.headless,
         activity_classifier=args.classifier,
         max_frames=args.max_frames,
+        classifier_weights=args.classifier_weights,
+        rep_joint=args.rep_joint,
+        rep_min=args.rep_min,
+        rep_max=args.rep_max,
+        model_complexity=args.model_complexity,
     )
 
 
