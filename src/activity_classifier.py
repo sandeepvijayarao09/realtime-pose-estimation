@@ -1,7 +1,17 @@
 """
-Activity Classification Module
-LSTM-based sequence classifier for exercise and yoga pose recognition.
-Supports training, inference, and feature extraction pipelines.
+Activity Classification Module (optional, experimental)
+
+An LSTM sequence classifier for exercise and yoga pose recognition, with
+training, inference and feature-extraction helpers.
+
+No trained weights ship with this repository. A freshly constructed
+ActivityClassifier is randomly initialised, so its predictions are meaningless
+until you call train() on your own labelled sequences or load_model() a model
+you trained. Until then predict_activity() falls back to a simple
+motion-magnitude heuristic and says so with a warning.
+
+TensorFlow is not part of the core requirements. Install it with
+`pip install -r requirements-classifier.txt` to use the LSTM.
 """
 
 import numpy as np
@@ -16,7 +26,7 @@ try:
     TENSORFLOW_AVAILABLE = True
 except ImportError:
     TENSORFLOW_AVAILABLE = False
-    warnings.warn("TensorFlow not available. Activity classifier will use fallback mode.")
+    tf = keras = layers = Sequential = Model = None
 
 
 class ActivityClassifier:
@@ -65,6 +75,8 @@ class ActivityClassifier:
         self.num_classes = num_classes
 
         self.model = None
+        self.is_trained = False  # True after train() or load_model()
+        self._warned_untrained = False
         self.sequence_buffer = deque(maxlen=sequence_length)
         self.scaler_mean = None
         self.scaler_std = None
@@ -149,6 +161,15 @@ class ActivityClassifier:
         if use_fallback or self.model is None or not TENSORFLOW_AVAILABLE:
             return self._fallback_classify()
 
+        if not self.is_trained:
+            if not self._warned_untrained:
+                warnings.warn(
+                    "ActivityClassifier has no trained weights; using the motion "
+                    "heuristic instead. Call train() or load_model() first."
+                )
+                self._warned_untrained = True
+            return self._fallback_classify()
+
         # Prepare sequence
         sequence = np.array(list(self.sequence_buffer), dtype=np.float32)
         sequence = np.expand_dims(sequence, axis=0)  # Add batch dimension
@@ -171,10 +192,14 @@ class ActivityClassifier:
 
     def _fallback_classify(self) -> Tuple[str, float, np.ndarray]:
         """
-        Fallback heuristic classifier using angle statistics.
+        Fallback heuristic based on overall motion magnitude in the buffer.
+
+        This only separates standing / walking / running by thresholds on the
+        landmark standard deviation. The returned "confidence" is a fixed score
+        per rule, not a calibrated probability.
 
         Returns:
-            Tuple of (activity_name, confidence, dummy_probabilities).
+            Tuple of (activity_name, rule_score, one-hot-style scores).
         """
         # Extract statistics from sequence
         if len(self.sequence_buffer) == 0:
@@ -251,6 +276,7 @@ class ActivityClassifier:
             batch_size=batch_size,
             verbose=verbose,
         )
+        self.is_trained = True
 
         return history.history
 
@@ -293,6 +319,7 @@ class ActivityClassifier:
             return
 
         self.model = keras.models.load_model(filepath)
+        self.is_trained = True
 
     def clear_sequence(self) -> None:
         """Clear the sequence buffer."""

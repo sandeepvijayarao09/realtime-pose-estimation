@@ -1,0 +1,3 @@
+# Optional: only needed for the experimental LSTM in src/activity_classifier.py
+-r requirements.txt
+tensorflow==2.21.0
