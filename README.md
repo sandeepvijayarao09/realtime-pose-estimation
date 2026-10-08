@@ -64,7 +64,7 @@ python demo.py --input assets/sample_squat.webm --rep-joint right_knee_angle --r
 python demo.py
 ```
 
-The first run downloads the pose model (about 9 MB for `full`) into `./models`. Set `POSE_MODEL_DIR` to cache it elsewhere. MediaPipe 1.1 ships wheels for Apple Silicon macOS, Linux (x86_64 / aarch64) and Windows.
+The first run downloads the pose model (about 9 MB for `full`) into `./models`. Set `POSE_MODEL_DIR` to cache it elsewhere. MediaPipe 1.1 ships wheels for Apple Silicon macOS, Linux (x86_64 / aarch64) and Windows. On a headless Linux box you also need the EGL/GLES runtime: `sudo apt-get install libegl1 libgles2`.
 
 ### Command-line options
 

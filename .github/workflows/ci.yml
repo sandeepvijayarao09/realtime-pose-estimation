@@ -20,6 +20,8 @@ jobs:
         with:
           path: models
           key: pose-landmarker-full-float16-v1
+      - name: System libraries for MediaPipe
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libegl1 libgles2
       - name: Install
         run: pip install -r requirements-dev.txt
       - name: Test
